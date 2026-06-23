@@ -54,8 +54,9 @@ def execute_query(query, params=(), fetch=False):
 @bot.message_handler(commands=["start", "help"])
 def send_welcome(message):
     welcome_text = (
-        "⚡ *Rejuvenation Dex v7.0 (Speed Mode)*\n\n"
-        "Welcome back to Aevium! What would you like to do?"
+        "⚡ *PIKADEX 💛 Trainer's Companion*\n\n"
+        "Welcome back Trainer!"
+        "I'm Pikadex, What would you like to do?"
     )
 
     markup = types.InlineKeyboardMarkup()
@@ -93,7 +94,7 @@ def handle_query(call):
     elif call.data == "action_release":
         msg = bot.send_message(
             chat_id,
-            "Mistakes happen! Enter the **Name** or **ID** to release:",
+            "Enter the **Name** or **ID** to release:",
             parse_mode="Markdown",
         )
         bot.register_next_step_handler(msg, process_release_step)
@@ -148,7 +149,7 @@ def command_search(message):
 def command_release(message):
     msg = bot.send_message(
         message.chat.id,
-        "Mistakes happen! Enter the **Name** or **ID** to release:",
+        "Enter the **Name** or **ID** to release:",
         parse_mode="Markdown",
     )
     bot.register_next_step_handler(msg, process_release_step)
@@ -197,7 +198,7 @@ def process_search_step(message):
     else:
         bot.send_message(
             message.chat.id,
-            f"❌ **{term}** is NOT in your Pokédex yet. Time to throw a Pokéball!",
+            f"❌ **{term}** is NOT in your Pokédex yet!",
             parse_mode="Markdown",
         )
 
