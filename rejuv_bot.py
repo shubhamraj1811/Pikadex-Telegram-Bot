@@ -2,8 +2,7 @@ import telebot
 from telebot import types
 from telebot.types import BotCommand
 import sqlite3
-import requests
-import math  # NEW: Needed to calculate total pages
+import math
 
 # Paste your token here!
 TOKEN = "8796049296:AAFaDg9UH-_3PeLTCxCnTwgLcu9Nu9Di90c"
@@ -11,7 +10,7 @@ bot = telebot.TeleBot(TOKEN)
 DB_FILE = "rejuv_bot.db"
 
 user_catch_data = {}
-ITEMS_PER_PAGE = 20  # NEW: How many Pokémon to show per page
+ITEMS_PER_PAGE = 20
 
 
 # ==========================================
@@ -50,28 +49,12 @@ def execute_query(query, params=(), fetch=False):
 
 
 # ==========================================
-# SPRITE FETCHER
-# ==========================================
-def get_pokemon_sprite(name):
-    try:
-        response = requests.get(
-            f"https://pokeapi.co/api/v2/pokemon/{name.lower()}", timeout=3
-        )
-        if response.status_code == 200:
-            data = response.json()
-            return data["sprites"]["front_default"]
-    except requests.RequestException:
-        pass
-    return "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/items/poke-ball.png"
-
-
-# ==========================================
 # MAIN MENU & BUTTONS
 # ==========================================
 @bot.message_handler(commands=["start", "help"])
 def send_welcome(message):
     welcome_text = (
-        "🤖 *Rejuvenation Dex v6.0*\n\n"
+        "⚡ *Rejuvenation Dex v7.0 (Speed Mode)*\n\n"
         "Welcome back to Aevium! What would you like to do?"
     )
 
@@ -124,15 +107,13 @@ def handle_query(call):
         bot.register_next_step_handler(msg, process_search_step)
 
     elif call.data == "action_view":
-        handle_view(chat_id, page=0)  # Fetch the very first page
+        handle_view(chat_id, page=0)
 
     elif call.data.startswith("page_view_"):
-        # NEW: Intercept the page flip buttons!
         page_number = int(call.data.split("_")[2])
         handle_view(chat_id, page=page_number, message_id=call.message.message_id)
 
     elif call.data == "action_home":
-        # Closes the Dex view and re-opens the main menu
         bot.delete_message(chat_id, call.message.message_id)
         send_welcome(call.message)
 
@@ -184,7 +165,7 @@ def command_stats(message):
 
 
 # ==========================================
-# FEATURE: SEARCHING
+# FEATURE: SEARCHING (LIGHTNING FAST)
 # ==========================================
 def process_search_step(message):
     if message.text.startswith("/"):
@@ -209,14 +190,10 @@ def process_search_step(message):
 
     if result:
         pid, name = result[0]
-        bot.send_chat_action(message.chat.id, "upload_photo")
-        sprite_url = get_pokemon_sprite(name)
         caption_text = (
             f"✅ *IN POKÉDEX!*\nYou have already caught **{name}** (ID: #{pid:04d})."
         )
-        bot.send_photo(
-            message.chat.id, sprite_url, caption=caption_text, parse_mode="Markdown"
-        )
+        bot.send_message(message.chat.id, caption_text, parse_mode="Markdown")
     else:
         bot.send_message(
             message.chat.id,
@@ -226,7 +203,7 @@ def process_search_step(message):
 
 
 # ==========================================
-# FEATURE: CATCHING
+# FEATURE: CATCHING (LIGHTNING FAST)
 # ==========================================
 def process_name_step(message):
     if message.text.startswith("/"):
@@ -266,14 +243,10 @@ def process_id_step(message):
                 parse_mode="Markdown",
             )
         else:
-            bot.send_chat_action(message.chat.id, "upload_photo")
-            sprite_url = get_pokemon_sprite(name)
             caption_text = (
                 f"✅ *Caught!*\nSuccessfully registered **{name}** (ID: #{pid:04d})."
             )
-            bot.send_photo(
-                message.chat.id, sprite_url, caption=caption_text, parse_mode="Markdown"
-            )
+            bot.send_message(message.chat.id, caption_text, parse_mode="Markdown")
 
         del user_catch_data[message.chat.id]
 
@@ -317,10 +290,9 @@ def process_release_step(message):
 
 
 # ==========================================
-# FEATURE: VIEW (NEW PAGINATION)
+# FEATURE: VIEW (PAGINATION)
 # ==========================================
 def handle_view(chat_id, page=0, message_id=None):
-    # Step 1: Count total Pokémon to calculate total pages
     count_records = execute_query(
         "SELECT COUNT(*) FROM caught_pokemon WHERE user_id = ?", (chat_id,), fetch=True
     )
@@ -330,14 +302,12 @@ def handle_view(chat_id, page=0, message_id=None):
         bot.send_message(chat_id, "📭 Your Pokédex is completely empty!")
         return
 
-    # Calculate max pages
     total_pages = math.ceil(total_items / ITEMS_PER_PAGE)
     if page < 0:
         page = 0
     if page >= total_pages:
         page = total_pages - 1
 
-    # Fetch ONLY the 20 Pokémon for this specific page
     offset = page * ITEMS_PER_PAGE
     records = execute_query(
         "SELECT pokemon_id, name FROM caught_pokemon WHERE user_id = ? ORDER BY pokemon_id ASC LIMIT ? OFFSET ?",
@@ -345,12 +315,10 @@ def handle_view(chat_id, page=0, message_id=None):
         fetch=True,
     )
 
-    # Build the text
     dex_text = f"📜 *YOUR CAUGHT POKÉMON (Page {page + 1}/{total_pages})*\n〰️〰️〰️〰️〰️〰️〰️〰️〰️\n"
     for pid, name in records:
         dex_text += f"🔹 `#{pid:04d}` - **{name}**\n"
 
-    # Build the Pagination Buttons
     markup = types.InlineKeyboardMarkup()
     nav_buttons = []
 
@@ -366,10 +334,8 @@ def handle_view(chat_id, page=0, message_id=None):
     if nav_buttons:
         markup.row(*nav_buttons)
 
-    # Add a home button to close the dex
     markup.row(types.InlineKeyboardButton("🏠 Main Menu", callback_data="action_home"))
 
-    # Update the existing message so it doesn't spam the chat, or send a new one
     if message_id:
         bot.edit_message_text(
             dex_text, chat_id, message_id, parse_mode="Markdown", reply_markup=markup
@@ -411,5 +377,5 @@ if __name__ == "__main__":
         ]
     )
 
-    print("Phase 6 Online. Pagination activated.")
+    print("Phase 7 Online. Speed Mode activated (API calls removed).")
     bot.infinity_polling()
