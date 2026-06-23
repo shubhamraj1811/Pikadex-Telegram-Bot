@@ -3,6 +3,7 @@ from telebot import types
 from telebot.types import BotCommand
 import sqlite3
 import requests
+import math  # NEW: Needed to calculate total pages
 
 # Paste your token here!
 TOKEN = "8796049296:AAFaDg9UH-_3PeLTCxCnTwgLcu9Nu9Di90c"
@@ -10,6 +11,7 @@ bot = telebot.TeleBot(TOKEN)
 DB_FILE = "rejuv_bot.db"
 
 user_catch_data = {}
+ITEMS_PER_PAGE = 20  # NEW: How many Pokémon to show per page
 
 
 # ==========================================
@@ -69,7 +71,7 @@ def get_pokemon_sprite(name):
 @bot.message_handler(commands=["start", "help"])
 def send_welcome(message):
     welcome_text = (
-        "🤖 *Rejuvenation Dex v5.0*\n\n"
+        "🤖 *Rejuvenation Dex v6.0*\n\n"
         "Welcome back to Aevium! What would you like to do?"
     )
 
@@ -82,7 +84,6 @@ def send_welcome(message):
     btn_search = types.InlineKeyboardButton("🔍 Search", callback_data="action_search")
     btn_stats = types.InlineKeyboardButton("📊 Stats", callback_data="action_stats")
 
-    # Custom Row Layout for better looks
     markup.row(btn_catch, btn_release)
     markup.row(btn_search, btn_view)
     markup.row(btn_stats)
@@ -123,14 +124,67 @@ def handle_query(call):
         bot.register_next_step_handler(msg, process_search_step)
 
     elif call.data == "action_view":
-        handle_view(chat_id)
+        handle_view(chat_id, page=0)  # Fetch the very first page
+
+    elif call.data.startswith("page_view_"):
+        # NEW: Intercept the page flip buttons!
+        page_number = int(call.data.split("_")[2])
+        handle_view(chat_id, page=page_number, message_id=call.message.message_id)
+
+    elif call.data == "action_home":
+        # Closes the Dex view and re-opens the main menu
+        bot.delete_message(chat_id, call.message.message_id)
+        send_welcome(call.message)
 
     elif call.data == "action_stats":
         handle_stats(chat_id)
 
 
 # ==========================================
-# FEATURE: SEARCHING (NEW!)
+# SLASH COMMAND ROUTERS
+# ==========================================
+@bot.message_handler(commands=["catch"])
+def command_catch(message):
+    msg = bot.send_message(
+        message.chat.id,
+        "Awesome! What is the **Name** of the Pokémon?",
+        parse_mode="Markdown",
+    )
+    bot.register_next_step_handler(msg, process_name_step)
+
+
+@bot.message_handler(commands=["search"])
+def command_search(message):
+    msg = bot.send_message(
+        message.chat.id,
+        "🔍 Enter the **Name** or **ID** of the Pokémon to search:",
+        parse_mode="Markdown",
+    )
+    bot.register_next_step_handler(msg, process_search_step)
+
+
+@bot.message_handler(commands=["release"])
+def command_release(message):
+    msg = bot.send_message(
+        message.chat.id,
+        "Mistakes happen! Enter the **Name** or **ID** to release:",
+        parse_mode="Markdown",
+    )
+    bot.register_next_step_handler(msg, process_release_step)
+
+
+@bot.message_handler(commands=["view"])
+def command_view(message):
+    handle_view(message.chat.id, page=0)
+
+
+@bot.message_handler(commands=["stats"])
+def command_stats(message):
+    handle_stats(message.chat.id)
+
+
+# ==========================================
+# FEATURE: SEARCHING
 # ==========================================
 def process_search_step(message):
     if message.text.startswith("/"):
@@ -140,7 +194,6 @@ def process_search_step(message):
     term = message.text.strip().upper()
     user_id = message.from_user.id
 
-    # Check Database
     if term.isdigit():
         result = execute_query(
             "SELECT pokemon_id, name FROM caught_pokemon WHERE user_id = ? AND pokemon_id = ?",
@@ -155,19 +208,16 @@ def process_search_step(message):
         )
 
     if result:
-        # It's caught! Fetch data and sprite.
         pid, name = result[0]
         bot.send_chat_action(message.chat.id, "upload_photo")
         sprite_url = get_pokemon_sprite(name)
         caption_text = (
             f"✅ *IN POKÉDEX!*\nYou have already caught **{name}** (ID: #{pid:04d})."
         )
-
         bot.send_photo(
             message.chat.id, sprite_url, caption=caption_text, parse_mode="Markdown"
         )
     else:
-        # Not caught.
         bot.send_message(
             message.chat.id,
             f"❌ **{term}** is NOT in your Pokédex yet. Time to throw a Pokéball!",
@@ -267,26 +317,70 @@ def process_release_step(message):
 
 
 # ==========================================
-# FEATURE: VIEW & STATS
+# FEATURE: VIEW (NEW PAGINATION)
 # ==========================================
-def handle_view(chat_id):
-    records = execute_query(
-        "SELECT pokemon_id, name FROM caught_pokemon WHERE user_id = ? ORDER BY pokemon_id ASC",
-        (chat_id,),
-        fetch=True,
+def handle_view(chat_id, page=0, message_id=None):
+    # Step 1: Count total Pokémon to calculate total pages
+    count_records = execute_query(
+        "SELECT COUNT(*) FROM caught_pokemon WHERE user_id = ?", (chat_id,), fetch=True
     )
+    total_items = count_records[0][0] if count_records else 0
 
-    if not records:
+    if total_items == 0:
         bot.send_message(chat_id, "📭 Your Pokédex is completely empty!")
         return
 
-    dex_text = "📜 *YOUR CAUGHT POKÉMON*\n〰️〰️〰️〰️〰️〰️〰️〰️〰️\n"
+    # Calculate max pages
+    total_pages = math.ceil(total_items / ITEMS_PER_PAGE)
+    if page < 0:
+        page = 0
+    if page >= total_pages:
+        page = total_pages - 1
+
+    # Fetch ONLY the 20 Pokémon for this specific page
+    offset = page * ITEMS_PER_PAGE
+    records = execute_query(
+        "SELECT pokemon_id, name FROM caught_pokemon WHERE user_id = ? ORDER BY pokemon_id ASC LIMIT ? OFFSET ?",
+        (chat_id, ITEMS_PER_PAGE, offset),
+        fetch=True,
+    )
+
+    # Build the text
+    dex_text = f"📜 *YOUR CAUGHT POKÉMON (Page {page + 1}/{total_pages})*\n〰️〰️〰️〰️〰️〰️〰️〰️〰️\n"
     for pid, name in records:
         dex_text += f"🔹 `#{pid:04d}` - **{name}**\n"
 
-    bot.send_message(chat_id, dex_text, parse_mode="Markdown")
+    # Build the Pagination Buttons
+    markup = types.InlineKeyboardMarkup()
+    nav_buttons = []
+
+    if page > 0:
+        nav_buttons.append(
+            types.InlineKeyboardButton("⬅️ Prev", callback_data=f"page_view_{page - 1}")
+        )
+    if page < total_pages - 1:
+        nav_buttons.append(
+            types.InlineKeyboardButton("Next ➡️", callback_data=f"page_view_{page + 1}")
+        )
+
+    if nav_buttons:
+        markup.row(*nav_buttons)
+
+    # Add a home button to close the dex
+    markup.row(types.InlineKeyboardButton("🏠 Main Menu", callback_data="action_home"))
+
+    # Update the existing message so it doesn't spam the chat, or send a new one
+    if message_id:
+        bot.edit_message_text(
+            dex_text, chat_id, message_id, parse_mode="Markdown", reply_markup=markup
+        )
+    else:
+        bot.send_message(chat_id, dex_text, parse_mode="Markdown", reply_markup=markup)
 
 
+# ==========================================
+# FEATURE: STATS
+# ==========================================
 def handle_stats(chat_id):
     records = execute_query(
         "SELECT COUNT(*) FROM caught_pokemon WHERE user_id = ?", (chat_id,), fetch=True
@@ -305,14 +399,17 @@ def handle_stats(chat_id):
 if __name__ == "__main__":
     init_db()
 
-    # --- NEW CODE: Set up the Command Palette ---
     bot.set_my_commands(
         [
             BotCommand("start", "Boot up the Pokédex Menu"),
+            BotCommand("catch", "Add a new caught Pokémon"),
+            BotCommand("search", "Check if a Pokémon is caught"),
+            BotCommand("release", "Remove a Pokémon by Name/ID"),
+            BotCommand("view", "See your full Pokédex list"),
+            BotCommand("stats", "Check your total completion"),
             BotCommand("help", "Learn how to use the bot"),
         ]
     )
-    # --------------------------------------------
 
-    print("Phase 5.1 Online. Command Menu integrated.")
+    print("Phase 6 Online. Pagination activated.")
     bot.infinity_polling()
