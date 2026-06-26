@@ -5,7 +5,7 @@ import sqlite3
 import math
 
 # Paste your token here!
-TOKEN = "8796049296:AAFaDg9UH-_3PeLTCxCnTwgLcu9Nu9Di90c"
+TOKEN = "TOKEN"
 bot = telebot.TeleBot(TOKEN)
 DB_FILE = "rejuv_bot.db"
 
